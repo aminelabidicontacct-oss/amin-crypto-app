@@ -1,95 +1,170 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.subplots as sp
 import requests
 import ta
 
-# 1. UI Configuration
-st.set_page_config(page_title="Trading AI", layout="wide")
-st.markdown("""
-<style>
-    .main { background-color: #0b0e11; color: white; }
-    [data-testid="stMetricValue"] { color: #00ff88 !important; font-size: 26px !important; }
-    .stMetric { background: #161a1e; padding: 15px; border-radius: 10px; border: 1px solid #2b2f36; }
-    .modebar { display: none !important; }
-    ::-webkit-scrollbar { display: none; }
-</style>
-""", unsafe_allow_html=True)
+# ==============================
+# PAGE CONFIG
+# ==============================
+st.set_page_config(page_title="Pro Trading AI", layout="wide")
 
-# 2. Sidebar Navigation - FIXED AUTO-VALUE
-st.sidebar.title("🤖 Trading AI")
-# جعلنا SUI هي القيمة الافتراضية هنا لتجنب الشاشة الصفراء
-target = st.sidebar.text_input("Search Symbol:", value="SUI").upper()
+# ==============================
+# SIDEBAR
+# ==============================
+st.sidebar.title("🤖 Pro Trading AI")
 
-tf_map = {
-    "1 Minute": "minute", "5 Minutes": "minute&limit=500", 
-    "15 Minutes": "minute&limit=1000", "30 Minutes": "minute&limit=2000",
-    "1 Hour": "hour", "4 Hours": "hour&limit=500", 
-    "1 Day": "day", "1 Week": "day&limit=1000"
-}
-selected_tf = st.sidebar.selectbox("Select Timeframe:", list(tf_map.keys()))
+symbol = st.sidebar.text_input("Enter Symbol (e.g. BTC, ETH, SUI):", value="BTC").upper()
+timeframe = st.sidebar.selectbox("Select Timeframe", ["day", "hour", "minute"])
+limit = st.sidebar.slider("Candles", 50, 500, 200)
 
-# 3. Enhanced Data Engine with Error Logs
-def get_trading_data(coin):
+# ==============================
+# FETCH DATA FUNCTION
+# ==============================
+@st.cache_data(ttl=300)
+def fetch_data(symbol, timeframe, limit):
     try:
-        # Statistics
-        url_stats = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={coin}&tsyms=USD"
-        stat_res = requests.get(url_stats).json()
-        
-        if 'RAW' not in stat_res: return None, None
-        res = stat_res['RAW'][coin]['USD']
-        
-        # History
-        api_tf = tf_map[selected_tf]
-        url_hist = f"https://min-api.cryptocompare.com/data/v2/histo{api_tf}&fsym={coin}&tsym=USD"
-        hist_res = requests.get(url_hist).json()
-        
-        if 'Data' not in hist_res or 'Data' not in hist_res['Data']: return None, None
-        df = pd.DataFrame(hist_res['Data']['Data'])
-        
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df['EMA_20'] = ta.trend.ema_indicator(df['close'], window=20)
-        df['RSI'] = ta.momentum.rsi(df['close'], window=14)
-        
-        return df, res
-    except Exception as e:
-        return None, str(e)
+        url = f"https://min-api.cryptocompare.com/data/v2/histo{timeframe}?fsym={symbol}&tsym=USD&limit={limit}"
+        response = requests.get(url, timeout=10)
 
-df, stats = get_trading_data(target)
+        if response.status_code != 200:
+            return None
 
-# 4. Interface Rendering
-if df is not None and isinstance(df, pd.DataFrame):
-    st.title(f"🚀 Trading AI: {target} Intelligence")
-    
-    # Top Stats Row
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Price", f"${stats['PRICE']:,.4f}")
-    c2.metric("Market Cap", f"${stats['MKTCAP']:,.0f}")
-    c3.metric("24h High", f"${stats['HIGH24HOUR']:,.4f}")
-    c4.metric("24h Low", f"${stats['LOW24HOUR']:,.4f}")
+        data = response.json()
 
-    # Professional Chart
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df['time'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Price'))
-    fig.add_trace(go.Scatter(x=df['time'], y=df['EMA_20'], name='EMA 20', line=dict(color='#ff9800', width=1.5)))
+        if "Data" not in data or "Data" not in data["Data"]:
+            return None
 
-    fig.update_layout(
-        template='plotly_dark', height=600, margin=dict(l=0, r=10, t=0, b=0),
-        xaxis_rangeslider_visible=False, dragmode=False,
-        yaxis=dict(side='right'), paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11'
-    )
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        df = pd.DataFrame(data["Data"]["Data"])
+        df["time"] = pd.to_datetime(df["time"], unit="s")
+        df.set_index("time", inplace=True)
 
-    # AI Section
-    st.markdown("---")
-    rsi_val = df['RSI'].iloc[-1]
-    color = "#00ff88" if rsi_val < 35 else "#ff4b4b" if rsi_val > 65 else "#ffcc00"
-    st.subheader(f"🤖 AI Analysis: {target}")
-    st.markdown(f"Current RSI is **{rsi_val:.2f}**. Recommendation: <b style='color:{color};'>CHECK MARKET TREND</b>", unsafe_allow_html=True)
+        return df
 
-else:
-    st.error(f"Waiting for Data... Try a different symbol or check your connection. (Target: {target})")
-    st.info("Tip: Make sure you are using official symbols like BTC, SUI, or SOL.")
+    except Exception:
+        return None
 
-st.caption("Trading AI • V13 Stable Engine • 2026")
-    
+
+# ==============================
+# INDICATORS
+# ==============================
+def add_indicators(df):
+
+    # RSI
+    df["RSI"] = ta.momentum.rsi(df["close"], window=14)
+
+    # EMA
+    df["EMA50"] = ta.trend.ema_indicator(df["close"], window=50)
+    df["EMA200"] = ta.trend.ema_indicator(df["close"], window=200)
+
+    # MACD
+    macd = ta.trend.MACD(df["close"])
+    df["MACD"] = macd.macd()
+    df["MACD_SIGNAL"] = macd.macd_signal()
+    df["MACD_HIST"] = macd.macd_diff()
+
+    # Bollinger Bands
+    bb = ta.volatility.BollingerBands(df["close"])
+    df["BB_HIGH"] = bb.bollinger_hband()
+    df["BB_LOW"] = bb.bollinger_lband()
+
+    return df
+
+
+# ==============================
+# AI SIGNAL LOGIC
+# ==============================
+def generate_signal(df):
+
+    latest = df.iloc[-1]
+
+    trend = "Bullish" if latest["EMA50"] > latest["EMA200"] else "Bearish"
+
+    if trend == "Bullish" and latest["RSI"] < 30 and latest["MACD"] > latest["MACD_SIGNAL"]:
+        return "🔥 STRONG BUY"
+    elif trend == "Bearish" and latest["RSI"] > 70 and latest["MACD"] < latest["MACD_SIGNAL"]:
+        return "🚨 STRONG SELL"
+    elif trend == "Bullish":
+        return "📈 BUY BIAS"
+    else:
+        return "📉 SELL BIAS"
+
+
+# ==============================
+# MAIN APP
+# ==============================
+
+with st.spinner("Loading Market Data..."):
+    df = fetch_data(symbol, timeframe, limit)
+
+if df is None or df.empty:
+    st.error("⚠️ Error fetching data. Check symbol or internet connection.")
+    st.stop()
+
+df = add_indicators(df)
+
+signal = generate_signal(df)
+
+# ==============================
+# METRICS
+# ==============================
+
+st.title(f"🚀 {symbol} Advanced Trading Dashboard")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Last Price", f"${df['close'].iloc[-1]:.4f}")
+col2.metric("RSI", f"{df['RSI'].iloc[-1]:.2f}")
+col3.metric("Signal", signal)
+
+# ==============================
+# CREATE MULTI-CHART
+# ==============================
+
+fig = sp.make_subplots(
+    rows=3, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.05,
+    row_heights=[0.6, 0.2, 0.2]
+)
+
+# --- Candlestick ---
+fig.add_trace(
+    go.Candlestick(
+        x=df.index,
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        name="Price"
+    ),
+    row=1, col=1
+)
+
+# EMA
+fig.add_trace(go.Scatter(x=df.index, y=df["EMA50"], name="EMA50"), row=1, col=1)
+fig.add_trace(go.Scatter(x=df.index, y=df["EMA200"], name="EMA200"), row=1, col=1)
+
+# Bollinger
+fig.add_trace(go.Scatter(x=df.index, y=df["BB_HIGH"], name="BB High"), row=1, col=1)
+fig.add_trace(go.Scatter(x=df.index, y=df["BB_LOW"], name="BB Low"), row=1, col=1)
+
+# --- RSI ---
+fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"), row=2, col=1)
+
+# --- MACD ---
+fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"), row=3, col=1)
+fig.add_trace(go.Scatter(x=df.index, y=df["MACD_SIGNAL"], name="Signal"), row=3, col=1)
+fig.add_trace(go.Bar(x=df.index, y=df["MACD_HIST"], name="Histogram"), row=3, col=1)
+
+fig.update_layout(
+    template="plotly_dark",
+    height=900,
+    xaxis_rangeslider_visible=False
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.success("AI Engine Active ✅")
