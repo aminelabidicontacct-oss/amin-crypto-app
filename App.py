@@ -1,48 +1,124 @@
-import requests
 import streamlit as st
+import pandas as pd
+import requests
+import ta
+import time
 
-@st.cache_data(ttl=3)
-def get_binance_prices():
-    url = "https://api.binance.com/api/v3/ticker/price"
-    headers = {"User-Agent": "Mozilla/5.0"}
+st.set_page_config(layout="wide")
+
+st.title("⚡ Stable Pro Trading Terminal")
+
+coins = ["BTC", "ETH", "SOL", "BNB", "SUI", "XRP"]
+
+# =========================
+# SAFE REQUEST
+# =========================
+def safe_get(url):
+    try:
+        r = requests.get(url, timeout=5)
+        return r.json()
+    except:
+        return None
+
+# =========================
+# PRICE DATA
+# =========================
+def get_price(coin):
+    url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={coin}&tsyms=USD"
+    data = safe_get(url)
+
+    if not data:
+        return None
 
     try:
-        response = requests.get(url, headers=headers, timeout=3)
-        response.raise_for_status()
-        data = response.json()
+        return data["RAW"][coin]["USD"]
+    except:
+        return None
 
-        return {item["symbol"]: float(item["price"]) for item in data}
+# =========================
+# CHART DATA (FIXED)
+# =========================
+@st.cache_data(ttl=10)
+def get_chart(coin):
+    url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USD&limit=120"
+    data = safe_get(url)
+
+    if not data:
+        return None
+
+    try:
+        if "Data" not in data:
+            return None
+
+        if "Data" not in data["Data"]:
+            return None
+
+        df = pd.DataFrame(data["Data"]["Data"])
+
+        if df.empty:
+            return None
+
+        return df
 
     except:
         return None
 
-
-def get_coingecko_fallback():
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {
-        "ids": "bitcoin,ethereum,binancecoin",
-        "vs_currencies": "usd"
-    }
-
+# =========================
+# SIGNAL ENGINE
+# =========================
+def analyze(df):
     try:
-        response = requests.get(url, params=params, timeout=5)
-        return response.json()
+        df["rsi"] = ta.momentum.rsi(df["close"], 14)
+        df["ema50"] = ta.trend.ema_indicator(df["close"], 50)
+        df["ema200"] = ta.trend.ema_indicator(df["close"], 200)
+
+        df = df.dropna()
+
+        if len(df) < 2:
+            return "⚪ WAIT"
+
+        last = df.iloc[-1]
+
+        if last["ema50"] > last["ema200"] and last["rsi"] < 40:
+            return "🟢 BUY"
+        elif last["ema50"] < last["ema200"] and last["rsi"] > 60:
+            return "🔴 SELL"
+        else:
+            return "⚪ WAIT"
+
     except:
-        return None
+        return "⚪ WAIT"
 
+# =========================
+# MAIN LOOP (STABLE)
+# =========================
+placeholder = st.empty()
 
-st.title("Crypto Live Prices")
+while True:
 
-data = get_binance_prices()
+    with placeholder.container():
 
-if data:
-    st.success("Data source: Binance")
+        cols = st.columns(len(coins))
 
-    st.write({
-        "BTCUSDT": data.get("BTCUSDT"),
-        "ETHUSDT": data.get("ETHUSDT"),
-        "BNBUSDT": data.get("BNBUSDT"),
-    })
-else:
-    st.warning("Binance unavailable, switching to fallback API")
-    st.write(get_coingecko_fallback())
+        for i, coin in enumerate(coins):
+
+            price = get_price(coin)
+            df = get_chart(coin)
+
+            if price is None or df is None:
+                cols[i].warning(f"{coin} loading...")
+                continue
+
+            signal = analyze(df)
+
+            try:
+                cols[i].metric(
+                    coin,
+                    f"${price['PRICE']:.4f}",
+                    signal
+                )
+            except:
+                cols[i].error(f"{coin} error")
+
+    time.sleep(6)
+    st.rerun()
