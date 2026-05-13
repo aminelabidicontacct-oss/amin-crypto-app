@@ -5,7 +5,6 @@ import ta
 from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=1000, key="price_update_timer")
 @st.cache_data(ttl=60)
-def fetch_data(symbol):
 # Page Configuration
 st.set_page_config(page_title="Crypto Analysis Tool", layout="wide")
 
