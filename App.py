@@ -2,80 +2,80 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import ta
-from streamlit_autorefresh import st_autorefresh
+import plotly.graph_objects as go
 
-# 1. Page Config & Professional Theme
-st.set_page_config(page_title="Amin Crypto Hub", layout="wide")
+st.set_page_config(page_title="Amin Pro Radar", layout="wide")
 
-# 2. Sidebar for Navigation (Choose your coin)
-st.sidebar.title("🚀 Control Center")
-selected_coin = st.sidebar.selectbox(
-    "Select Asset:",
-    ['BTC/USDT', 'SUI/USDT', 'SOL/USDT', 'ANKR/USDT', 'ETH/USDT']
+# Professional UI Styling
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stHorizontalBlock"] { background: #161a1d; padding: 15px; border-radius: 15px; }
+    [data-testid="stMetricValue"] { font-size: 40px !important; color: #00ff88; }
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
+# 1. Selection Interface
+selected_coin = st.radio(
+    "Asset Selection:", 
+    ["BTC/USDT", "SUI/USDT", "SOL/USDT", "ANKR/USDT", "ETH/USDT"], 
+    horizontal=True
 )
 
-# 3. Fast Refresh Timer (1 second)
-st_autorefresh(interval=1000, key="price_refresh")
-
-# 4. Cached Data Logic (Heavy fetching)
 @st.cache_data(ttl=60)
-def fetch_analysis(symbol):
+def get_market_data(symbol):
     try:
-        exchange = ccxt.kucoin()
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=100)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        ex = ccxt.kucoin()
+        ohlcv = ex.fetch_ohlcv(symbol, timeframe='1h', limit=60)
+        df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        df['ts'] = pd.to_datetime(df['ts'], unit='ms')
         df['RSI'] = ta.momentum.rsi(df['close'], window=14)
         return df
-    except:
-        return None
+    except: return None
 
-# 5. Fast Price Logic (Instant)
-def get_live_data(symbol):
+# 2. Live Update (Prevents Fading/Flickering)
+@st.fragment(run_every="1s")
+def render_dashboard(symbol, rsi_val, df_plot):
     try:
-        ticker = ccxt.kucoin().fetch_ticker(symbol)
-        return ticker['last'], ticker['change'] # Current price and 24h change
-    except:
-        return None, None
-
-# --- Application Layout ---
-st.title(f"📊 Tracking: {selected_coin}")
-st.markdown("---")
-
-# Main Placeholder for the numbers (Stops the flickering from 13598.jpg)
-header_placeholder = st.empty()
-
-# Fetch Data
-live_price, price_change = get_live_data(selected_coin)
-analysis_df = fetch_analysis(selected_coin)
-
-if live_price and analysis_df is not None:
-    # Logic for Green/Red color based on 24h change
-    price_color = "green" if price_change >= 0 else "red"
-    last_rsi = analysis_df['RSI'].iloc[-1]
-
-    with header_placeholder.container():
-        # Displaying only the numbers that change
-        c1, c2, c3 = st.columns(3)
+        t = ccxt.kucoin().fetch_ticker(symbol)
+        price, change = t['last'], t['percentage']
+        color = "#00ff88" if change >= 0 else "#ff4b4b"
         
-        # Big Price Display with Color
-        c1.markdown(f"### Current Price\n <h2 style='color:{price_color};'>${live_price:,.4f}</h2>", unsafe_allow_html=True)
+        # Price Card
+        st.markdown(f"""
+            <div style="background: #161a1d; padding: 25px; border-radius: 20px; border-left: 10px solid {color}; text-align: center;">
+                <h1 style="color: {color}; margin: 0;">${price:,.4f}</h1>
+                <p style="color: {color}; font-weight: bold; font-size: 18px;">{change}%</p>
+            </div>
+        """, unsafe_allow_html=True)
         
-        # RSI Display
-        c2.metric("RSI (14)", f"{last_rsi:.2f}")
+        st.write("")
+        c1, c2 = st.columns(2)
+        c1.metric("RSI (14)", f"{rsi_val:.2f}")
         
-        # Signal Box
-        if last_rsi > 70:
-            c3.error("🔥 OVERBOUGHT")
-        elif last_rsi < 30:
-            c3.success("💎 OVERSOLD")
-        else:
-            c3.info("⚖️ NEUTRAL")
+        if rsi_val > 70: c2.error("SIGNAL: SELL")
+        elif rsi_val < 30: c2.success("SIGNAL: BUY")
+        else: c2.info("SIGNAL: NEUTRAL")
 
-    # Static Section (History and Data) - No flickering here
-    st.subheader("Market History (Last 5 Hours)")
-    st.dataframe(analysis_df.tail(5), use_container_width=True)
-    
-    st.subheader("Price Trend")
-    st.line_chart(analysis_df['close'].tail(30))
+        # 3. Candlestick Chart
+        fig = go.Figure(data=[go.Candlestick(
+            x=df_plot['ts'], open=df_plot['open'], high=df_plot['high'],
+            low=df_plot['low'], close=df_plot['close'],
+            increasing_line_color='#00ff88', decreasing_line_color='#ff4b4b'
+        )])
+        fig.update_layout(
+            template='plotly_dark', 
+            xaxis_rangeslider_visible=False, 
+            margin=dict(l=5, r=5, t=5, b=5),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except: st.write("Syncing...")
 
-st.caption(f"Connected to KuCoin API. User: Amin")
+# Execute
+df = get_market_data(selected_coin)
+if df is not None:
+    render_dashboard(selected_coin, df['RSI'].iloc[-1], df)
