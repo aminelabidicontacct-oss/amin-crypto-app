@@ -1,170 +1,136 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-import plotly.subplots as sp
 import requests
+import streamlit.components.v1 as components
 import ta
+import json
 
-# ==============================
-# PAGE CONFIG
-# ==============================
-st.set_page_config(page_title="Pro Trading AI", layout="wide")
+st.set_page_config(layout="wide")
 
-# ==============================
-# SIDEBAR
-# ==============================
-st.sidebar.title("🤖 Pro Trading AI")
+st.title("🚀 Pro TradingView Dashboard")
 
-symbol = st.sidebar.text_input("Enter Symbol (e.g. BTC, ETH, SUI):", value="BTC").upper()
-timeframe = st.sidebar.selectbox("Select Timeframe", ["day", "hour", "minute"])
-limit = st.sidebar.slider("Candles", 50, 500, 200)
+symbol = st.text_input("Symbol", "BTC").upper()
+timeframe = st.selectbox("Timeframe", ["minute", "hour", "day"])
 
-# ==============================
-# FETCH DATA FUNCTION
-# ==============================
-@st.cache_data(ttl=300)
-def fetch_data(symbol, timeframe, limit):
-    try:
-        url = f"https://min-api.cryptocompare.com/data/v2/histo{timeframe}?fsym={symbol}&tsym=USD&limit={limit}"
-        response = requests.get(url, timeout=10)
+# ======================
+# FETCH DATA
+# ======================
+def fetch_data(symbol, tf):
+    url = f"https://min-api.cryptocompare.com/data/v2/histo{tf}?fsym={symbol}&tsym=USD&limit=300"
+    r = requests.get(url, timeout=10).json()
 
-        if response.status_code != 200:
-            return None
-
-        data = response.json()
-
-        if "Data" not in data or "Data" not in data["Data"]:
-            return None
-
-        df = pd.DataFrame(data["Data"]["Data"])
-        df["time"] = pd.to_datetime(df["time"], unit="s")
-        df.set_index("time", inplace=True)
-
-        return df
-
-    except Exception:
+    if "Data" not in r:
         return None
 
+    df = pd.DataFrame(r["Data"]["Data"])
+    df["time"] = df["time"] * 1000
 
-# ==============================
-# INDICATORS
-# ==============================
-def add_indicators(df):
-
-    # RSI
     df["RSI"] = ta.momentum.rsi(df["close"], window=14)
-
-    # EMA
     df["EMA50"] = ta.trend.ema_indicator(df["close"], window=50)
-    df["EMA200"] = ta.trend.ema_indicator(df["close"], window=200)
-
-    # MACD
-    macd = ta.trend.MACD(df["close"])
-    df["MACD"] = macd.macd()
-    df["MACD_SIGNAL"] = macd.macd_signal()
-    df["MACD_HIST"] = macd.macd_diff()
-
-    # Bollinger Bands
-    bb = ta.volatility.BollingerBands(df["close"])
-    df["BB_HIGH"] = bb.bollinger_hband()
-    df["BB_LOW"] = bb.bollinger_lband()
 
     return df
 
+df = fetch_data(symbol, timeframe)
 
-# ==============================
-# AI SIGNAL LOGIC
-# ==============================
-def generate_signal(df):
-
-    latest = df.iloc[-1]
-
-    trend = "Bullish" if latest["EMA50"] > latest["EMA200"] else "Bearish"
-
-    if trend == "Bullish" and latest["RSI"] < 30 and latest["MACD"] > latest["MACD_SIGNAL"]:
-        return "🔥 STRONG BUY"
-    elif trend == "Bearish" and latest["RSI"] > 70 and latest["MACD"] < latest["MACD_SIGNAL"]:
-        return "🚨 STRONG SELL"
-    elif trend == "Bullish":
-        return "📈 BUY BIAS"
-    else:
-        return "📉 SELL BIAS"
-
-
-# ==============================
-# MAIN APP
-# ==============================
-
-with st.spinner("Loading Market Data..."):
-    df = fetch_data(symbol, timeframe, limit)
-
-if df is None or df.empty:
-    st.error("⚠️ Error fetching data. Check symbol or internet connection.")
+if df is None:
+    st.error("Error loading data")
     st.stop()
 
-df = add_indicators(df)
+# ======================
+# SAFE DATA
+# ======================
+candles = df[["time","open","high","low","close"]].dropna().values.tolist()
 
-signal = generate_signal(df)
+ema = df[["time","EMA50"]].dropna()
+ema = [{"time": int(x[0]), "value": float(x[1])} for x in ema.values]
 
-# ==============================
-# METRICS
-# ==============================
+volume = df[["time","volumeto"]].dropna()
+volume = [{"time": int(x[0]), "value": float(x[1]), "color": "#26a69a"} for x in volume.values]
 
-st.title(f"🚀 {symbol} Advanced Trading Dashboard")
+rsi_series = df["RSI"].dropna()
+rsi_last = float(rsi_series.iloc[-1]) if len(rsi_series) > 0 else 50
 
-col1, col2, col3 = st.columns(3)
+# ======================
+# JS SAFE JSON
+# ======================
+candles_json = json.dumps(candles)
+ema_json = json.dumps(ema)
+volume_json = json.dumps(volume)
 
-col1.metric("Last Price", f"${df['close'].iloc[-1]:.4f}")
-col2.metric("RSI", f"{df['RSI'].iloc[-1]:.2f}")
-col3.metric("Signal", signal)
+# ======================
+# CHART
+# ======================
+html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+</head>
 
-# ==============================
-# CREATE MULTI-CHART
-# ==============================
+<body style="margin:0;background:#0e1117;">
 
-fig = sp.make_subplots(
-    rows=3, cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.05,
-    row_heights=[0.6, 0.2, 0.2]
-)
+<div id="chart" style="height:700px;"></div>
 
-# --- Candlestick ---
-fig.add_trace(
-    go.Candlestick(
-        x=df.index,
-        open=df["open"],
-        high=df["high"],
-        low=df["low"],
-        close=df["close"],
-        name="Price"
-    ),
-    row=1, col=1
-)
+<script>
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+    layout: {{
+        background: {{ color: '#0e1117' }},
+        textColor: '#ffffff'
+    }},
+    grid: {{
+        vertLines: {{ color: '#1f2937' }},
+        horzLines: {{ color: '#1f2937' }}
+    }},
+    width: window.innerWidth,
+    height: 700
+}});
 
-# EMA
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA50"], name="EMA50"), row=1, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA200"], name="EMA200"), row=1, col=1)
+// ================= CANDLES =================
+const candles = chart.addCandlestickSeries();
+candles.setData({candles_json});
 
-# Bollinger
-fig.add_trace(go.Scatter(x=df.index, y=df["BB_HIGH"], name="BB High"), row=1, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df["BB_LOW"], name="BB Low"), row=1, col=1)
+// ================= EMA =================
+const ema = chart.addLineSeries({{
+    color: 'orange',
+    lineWidth: 2
+}});
+ema.setData({ema_json});
 
-# --- RSI ---
-fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"), row=2, col=1)
+// ================= VOLUME =================
+const volume = chart.addHistogramSeries({{
+    priceFormat: {{ type: 'volume' }},
+    priceScaleId: 'volume'
+}});
+volume.setData({volume_json});
 
-# --- MACD ---
-fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"), row=3, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df["MACD_SIGNAL"], name="Signal"), row=3, col=1)
-fig.add_trace(go.Bar(x=df.index, y=df["MACD_HIST"], name="Histogram"), row=3, col=1)
+// ================= LEVEL =================
+candles.createPriceLine({{
+    price: {df['close'].iloc[-1]},
+    color: 'red',
+    lineWidth: 2,
+    lineStyle: 2,
+    axisLabelVisible: true,
+    title: 'Price'
+}});
 
-fig.update_layout(
-    template="plotly_dark",
-    height=900,
-    xaxis_rangeslider_visible=False
-)
+</script>
 
-st.plotly_chart(fig, use_container_width=True)
+</body>
+</html>
+"""
 
-st.success("AI Engine Active ✅")
+components.html(html, height=750)
+
+# ======================
+# RSI PANEL
+# ======================
+st.subheader("📊 RSI")
+
+st.metric("RSI", f"{rsi_last:.2f}")
+
+if rsi_last < 30:
+    st.success("Oversold 🟢")
+elif rsi_last > 70:
+    st.error("Overbought 🔴")
+else:
+    st.info("Neutral ⚪")
