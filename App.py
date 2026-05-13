@@ -6,28 +6,48 @@ import time
 
 st.set_page_config(layout="wide")
 
-st.title("⚡ Pro Trading Terminal (Fast + Smart)")
+st.title("⚡ Stable Trading Terminal")
 
-coins = ["BTC", "ETH", "SOL", "BNB", "SUI", "XRP"]
+coins = ["BTC", "ETH", "SOL", "BNB", "SUI"]
 
 # =========================
-# CACHE (IMPORTANT FOR SPEED)
+# SAFE REQUEST FUNCTION
 # =========================
-@st.cache_data(ttl=3)
+def safe_get(url):
+    try:
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        return data
+    except:
+        return None
+
+# =========================
+# PRICE
+# =========================
 def get_price(coin):
     url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={coin}&tsyms=USD"
-    r = requests.get(url, timeout=3).json()
-    return r["RAW"][coin]["USD"]
+    data = safe_get(url)
 
-@st.cache_data(ttl=5)
-def get_chart(coin):
-    url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USD&limit=120"
-    r = requests.get(url, timeout=5).json()
-    df = pd.DataFrame(r["Data"]["Data"])
-    return df
+    if not data or "RAW" not in data:
+        return None
+
+    return data["RAW"].get(coin, {}).get("USD")
 
 # =========================
-# SMART SIGNAL ENGINE
+# CHART
+# =========================
+@st.cache_data(ttl=10)
+def get_chart(coin):
+    url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USD&limit=120"
+    data = safe_get(url)
+
+    if not data or "Data" not in data:
+        return None
+
+    return pd.DataFrame(data["Data"]["Data"])
+
+# =========================
+# SIGNAL
 # =========================
 def analyze(df):
     df["rsi"] = ta.momentum.rsi(df["close"], 14)
@@ -36,17 +56,15 @@ def analyze(df):
 
     last = df.iloc[-1]
 
-    trend_up = last["ema50"] > last["ema200"]
-
-    if trend_up and last["rsi"] < 40:
-        return "🟢 BUY (Trend + Pullback)"
-    elif not trend_up and last["rsi"] > 60:
-        return "🔴 SELL (Trend Down)"
+    if last["ema50"] > last["ema200"] and last["rsi"] < 40:
+        return "🟢 BUY"
+    elif last["ema50"] < last["ema200"] and last["rsi"] > 60:
+        return "🔴 SELL"
     else:
         return "⚪ WAIT"
 
 # =========================
-# LIVE LOOP
+# LOOP (STABLE VERSION)
 # =========================
 placeholder = st.empty()
 
@@ -57,22 +75,20 @@ while True:
 
         for i, coin in enumerate(coins):
 
-            try:
-                price = get_price(coin)
-                df = get_chart(coin)
+            price = get_price(coin)
+            df = get_chart(coin)
 
-                signal = analyze(df)
+            if price is None or df is None:
+                cols[i].warning(f"{coin} loading...")
+                continue
 
-                change = price["CHANGEPCT24HOUR"]
+            signal = analyze(df)
 
-                cols[i].metric(
-                    label=coin,
-                    value=f"${price['PRICE']:.4f}",
-                    delta=f"{signal} | {change:.2f}%"
-                )
+            cols[i].metric(
+                coin,
+                f"${price['PRICE']:.4f}",
+                signal
+            )
 
-            except:
-                cols[i].error(f"{coin} error")
-
-    time.sleep(3)
+    time.sleep(6)   # ⬅️ مهم جدًا
     st.rerun()
