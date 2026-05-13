@@ -1,85 +1,90 @@
-import streamlit as st
+      import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import ta
 
-# 1. Pro UI Setup
-st.set_page_config(page_title="Amin Live", layout="wide")
+# 1. Dashboard Styling (Dark Mode Pro)
+st.set_page_config(page_title="Amin TV Terminal", layout="wide")
 st.markdown("""
     <style>
-    .main { background-color: #000000; }
-    [data-testid="stMetricValue"] { color: #00ff88 !important; font-size: 35px !important; }
-    div.stButton > button { width: 100%; border-radius: 5px; }
-    /* Hide Plotly Toolbar */
-    .modebar { display: none !important; }
+    .main { background-color: #131722; } /* TradingView Dark Blue */
+    [data-testid="stMetricValue"] { color: #2962ff !important; font-size: 25px !important; }
+    .stMetric { background: #1e222d; padding: 10px; border-radius: 5px; }
+    /* Hide scrollbars for clean look */
+    ::-webkit-scrollbar { display: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Top Controls
-c1, c2 = st.columns([2, 1])
-with c1: symbol = st.text_input("ASSET:", "SUI").upper()
-with c2: tf = st.selectbox("TF:", ["minute", "hour", "day"], index=0)
+# 2. Sidebar Watchlist (Like 13611.jpg)
+st.sidebar.title("Watchlist")
+watchlist = ["SUI", "ANKR", "SOL", "BTC", "ETH"]
 
-# 3. Fast Engine
-@st.cache_data(ttl=1) # Update every second
-def get_amin_data(coin, interval):
+def get_quick_price(symbol):
     try:
-        url = f"https://min-api.cryptocompare.com/data/v2/histo{interval}?fsym={coin}&tsym=USD&limit=40"
-        r = requests.get(url).json()
-        df = pd.DataFrame(r['Data']['Data'])
+        url = f"https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD"
+        return requests.get(url).json()['USD']
+    except: return 0
+
+for coin in watchlist:
+    price = get_quick_price(coin)
+    st.sidebar.markdown(f"**{coin}** : `${price:,.4f}`")
+
+# 3. Main Interface - Active Chart
+c1, c2 = st.columns([3, 1])
+with c1:
+    target = st.text_input("Active Symbol:", "SUI").upper()
+with c2:
+    timeframe = st.selectbox("Interval:", ["minute", "hour", "day"])
+
+# 4. Global Engine V10
+@st.cache_data(ttl=1)
+def fetch_tv_data(coin, interval):
+    try:
+        url = f"https://min-api.cryptocompare.com/data/v2/histo{interval}?fsym={coin}&tsym=USD&limit=50"
+        data = requests.get(url).json()['Data']['Data']
+        df = pd.DataFrame(data)
         df['time'] = pd.to_datetime(df['time'], unit='s')
         
-        # Calculate Indicators
-        df['MA'] = ta.trend.sma_indicator(df['close'], window=10)
+        # Tech Indicators
+        df['EMA'] = ta.trend.ema_indicator(df['close'], window=20)
         df['RSI'] = ta.momentum.rsi(df['close'], window=14)
         
-        p_url = f"https://min-api.cryptocompare.com/data/price?fsym={coin}&tsyms=USD"
-        price = requests.get(p_url).json()['USD']
-        return df, price
+        live = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={coin}&tsyms=USD").json()['USD']
+        return df, live
     except: return None, None
 
-# 4. Logic & Locked Chart
-df, live_p = get_amin_data(symbol, tf)
+df, current_price = fetch_tv_data(target, timeframe)
 
 if df is not None:
-    # Live Metric
-    st.metric(f"{symbol} LIVE PRICE", f"${live_p:,.4f}")
+    # Top Stats Bar
+    col1, col2, col3 = st.columns(3)
+    col1.metric(target, f"${current_price:,.4f}")
+    col2.metric("RSI (14)", f"{df['RSI'].iloc[-1]:,.2f}")
+    col3.metric("EMA (20)", f"{df['EMA'].iloc[-1]:,.4f}")
 
-    # Build The Locked Chart
+    # The TradingView Style Chart
     fig = go.Figure()
-
     # Candlesticks
     fig.add_trace(go.Candlestick(
         x=df['time'], open=df['open'], high=df['high'],
         low=df['low'], close=df['close'], name='Price'
     ))
+    # Overlay EMA
+    fig.add_trace(go.Scatter(x=df['time'], y=df['EMA'], name='EMA 20', line=dict(color='#ff9800', width=1.5)))
 
-    # LOCK THE VIEW (No Zoom, No Pan)
     fig.update_layout(
-        template='plotly_dark',
-        height=500,
-        margin=dict(l=10, r=10, t=0, b=0),
+        template='plotly_dark', height=550,
+        margin=dict(l=0, r=0, t=0, b=0),
         xaxis_rangeslider_visible=False,
-        dragmode=False, # Disable dragging/zooming
-        yaxis=dict(fixedrange=False), # Auto-scale price
-        xaxis=dict(fixedrange=True),  # Lock time axis
-        paper_bgcolor='black',
-        plot_bgcolor='black'
+        dragmode='pan', # Smooth mobile movement
+        paper_bgcolor='#131722', plot_bgcolor='#131722',
+        yaxis=dict(side='right') # Price on the right like TV
     )
-
-    st.plotly_chart(fig, use_container_width=True, config={'staticPlot': False, 'displayModeBar': False})
-
-    # 5. Bottom Quick Options
-    st.write("---")
-    ind_choice = st.radio("INDICATOR:", ["OFF", "MA", "RSI"], horizontal=True)
     
-    if ind_choice == "MA":
-        st.info(f"Moving Average (10): {df['MA'].iloc[-1]:,.4f}")
-    elif ind_choice == "RSI":
-        st.info(f"RSI (14): {df['RSI'].iloc[-1]:,.2f}")
-
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 else:
-    st.error("Searching global nodes...")
+    st.error("Connecting to global market...")
 
-st.caption("Amin V8 • Pure Live Feed • No Zoom")
+st.caption("Amin V10 • TradingView Experience • Powered by V8 Engine")
+  
