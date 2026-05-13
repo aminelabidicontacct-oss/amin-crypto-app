@@ -21,47 +21,35 @@ def safe_get(url):
         return None
 
 # =========================
-# PRICE DATA
+# BATCH PRICE (FASTER FIX)
 # =========================
-def get_price(coin):
-    url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={coin}&tsyms=USD"
+def get_prices_batch(coins):
+    symbols = ",".join(coins)
+    url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={symbols}&tsyms=USD"
     data = safe_get(url)
 
-    if not data:
-        return None
+    if not data or "RAW" not in data:
+        return {}
 
-    try:
-        return data["RAW"][coin]["USD"]
-    except:
-        return None
+    return data["RAW"]
 
 # =========================
-# CHART DATA (FIXED)
+# CHART DATA
 # =========================
 @st.cache_data(ttl=10)
 def get_chart(coin):
     url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USD&limit=120"
     data = safe_get(url)
 
-    if not data:
+    if not data or "Data" not in data or "Data" not in data["Data"]:
         return None
 
-    try:
-        if "Data" not in data:
-            return None
+    df = pd.DataFrame(data["Data"]["Data"])
 
-        if "Data" not in data["Data"]:
-            return None
-
-        df = pd.DataFrame(data["Data"]["Data"])
-
-        if df.empty:
-            return None
-
-        return df
-
-    except:
+    if df.empty:
         return None
+
+    return df
 
 # =========================
 # SIGNAL ENGINE
@@ -90,7 +78,7 @@ def analyze(df):
         return "⚪ WAIT"
 
 # =========================
-# MAIN LOOP (STABLE)
+# MAIN LOOP (NO LOADING FIX)
 # =========================
 placeholder = st.empty()
 
@@ -98,27 +86,33 @@ while True:
 
     with placeholder.container():
 
+        prices = get_prices_batch(coins)
+
         cols = st.columns(len(coins))
 
         for i, coin in enumerate(coins):
 
-            price = get_price(coin)
-            df = get_chart(coin)
-
-            if price is None or df is None:
-                cols[i].warning(f"{coin} loading...")
-                continue
-
-            signal = analyze(df)
-
             try:
+                price_data = prices.get(coin, {}).get("USD", {})
+                price = price_data.get("PRICE", None)
+
+                df = get_chart(coin)
+
+                if price is None or df is None:
+                    # NO LOADING TEXT ANYMORE
+                    cols[i].empty()
+                    continue
+
+                signal = analyze(df)
+
                 cols[i].metric(
                     coin,
-                    f"${price['PRICE']:.4f}",
+                    f"${price:.4f}",
                     signal
                 )
+
             except:
-                cols[i].error(f"{coin} error")
+                cols[i].empty()
 
     time.sleep(6)
     st.rerun()
