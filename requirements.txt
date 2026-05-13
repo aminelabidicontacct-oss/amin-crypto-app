@@ -2,3 +2,4 @@ streamlit
 ccxt
 ta
 pandas
+streamlit-autorefresh
