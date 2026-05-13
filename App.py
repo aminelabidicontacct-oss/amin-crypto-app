@@ -14,7 +14,7 @@ symbols = ['BTC/USDT', 'SOL/USDT', 'SUI/USDT', 'ANKR/USDT']
 
 def fetch_crypto_data(symbol):
     try:
-        exchange = ccxt.binance()
+        exchange = ccxt.kucoin()
         # Fetch 100 hourly candles
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -52,4 +52,4 @@ for symbol in symbols:
         st.dataframe(df.tail(5), use_container_width=True)
         st.markdown("---")
 
-st.caption("Data provided by Binance via CCXT library.")
+st.caption("Data provided by kucoin via CCXT library.")
