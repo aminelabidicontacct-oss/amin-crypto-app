@@ -2,7 +2,10 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import ta
+from streamlit_autorefresh import st_autorefresh
 
+# This will refresh the app every 1 second (1000 milliseconds)
+st_autorefresh(interval=1000, key="price_update_timer")
 # Page Configuration
 st.set_page_config(page_title="Crypto Analysis Tool", layout="wide")
 
