@@ -4,108 +4,88 @@ import pandas as pd
 import ta
 import plotly.graph_objects as go
 
-# 1. Page Configuration (iOS Optimization)
+# 1. إعدادات الصفحة الأساسية
 st.set_page_config(page_title="Amin AI Terminal", layout="wide")
 
+# تنسيق الواجهة لتكون مريحة للعين (Dark Mode)
 st.markdown("""
     <style>
     .main { background-color: #0b0e11; }
-    [data-testid="stMetricValue"] { font-size: 25px !important; color: #00ff88; }
-    .stRadio > div { flex-direction: row; justify-content: center; gap: 15px; }
-    .ai-card { padding: 20px; border-radius: 15px; text-align: center; font-weight: bold; border: 1px solid #333; margin-bottom: 20px; }
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
+    h1, h2, h3 { color: #f0b90b !important; text-align: center; }
+    .stMetric { background-color: #1e2329; padding: 10px; border-radius: 10px; border: 1px solid #333; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Top Navigation (Asset & Timeframe)
-selected_coin = st.radio("Select Asset:", ["BTC/USDT", "SUI/USDT", "SOL/USDT", "ANKR/USDT"], horizontal=True)
-tf = st.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=1)
+st.title("🚀 رادار أمين الذكي V3")
 
+# 2. لوحة التحكم (العملة والفريم)
+col_nav1, col_nav2 = st.columns(2)
+with col_nav1:
+    coin = st.selectbox("إختر العملة:", ["BTC/USDT", "SUI/USDT", "SOL/USDT", "ANKR/USDT"], index=1)
+with col_nav2:
+    tf = st.selectbox("إختر الفريم (Timeframe):", ["15m", "1h", "4h", "1d"], index=1)
+
+# 3. جلب البيانات مع "كاش" (Caching) لتجنب التعليق
 @st.cache_data(ttl=30)
-def fetch_market_data(symbol, timeframe):
+def get_market_data(symbol, timeframe):
     try:
         ex = ccxt.binance()
-        ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=120)
+        ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
         df['ts'] = pd.to_datetime(df['ts'], unit='ms')
-        
-        # AI Indicators
+        # حساب المؤشرات للذكاء الاصطناعي
         df['RSI'] = ta.momentum.rsi(df['close'], window=14)
         df['EMA_20'] = ta.trend.ema_indicator(df['close'], window=20)
-        df['MA_50'] = ta.trend.sma_indicator(df['close'], window=50)
-        
         ticker = ex.fetch_ticker(symbol)
         return df, ticker
-    except: return None, None
+    except:
+        return None, None
 
-# 3. AI Analysis Engine
-def get_ai_decision(df):
-    last = df.iloc[-1]
-    rsi = last['RSI']
-    price = last['close']
-    ema = last['EMA_20']
+# تنفيذ الجلب
+df, ticker_info = get_market_data(coin, tf)
+
+if df is not None:
+    # 4. محرك قرار الذكاء الاصطناعي
+    rsi_val = df['RSI'].iloc[-1]
+    current_price = ticker_info['last']
+    ema_val = df['EMA_20'].iloc[-1]
     
-    if rsi < 30:
-        return "STRONG BUY", "#00ff88", "RSI Oversold: High reversal probability."
-    elif rsi < 40 and price > ema:
-        return "BUY", "#00cc66", "Bullish Trend: Price supported by EMA."
-    elif rsi > 70:
-        return "STRONG SELL", "#ff4b4b", "RSI Overbought: High crash risk!"
-    elif rsi > 60 and price < ema:
-        return "SELL", "#ff3333", "Bearish Trend: Selling pressure increasing."
+    if rsi_val < 35:
+        decision, color = "فرصة شراء قوية (BUY) 📈", "green"
+    elif rsi_val > 65:
+        decision, color = "فرصة بيع قوية (SELL) 📉", "red"
     else:
-        return "NEUTRAL", "#848e9c", "Market Sideways: Waiting for volume."
+        decision, color = "إنتظر - وضع محايد (WAIT) ⚖️", "gray"
 
-# 4. Live Terminal View
-@st.fragment(run_every="2s")
-def render_terminal(symbol, df_plot, info):
-    price = info['last']
-    change = info['percentage']
-    
-    # AI Signal Box
-    signal, sig_color, reason = get_ai_decision(df_plot)
+    # عرض قرار الذكاء الاصطناعي
     st.markdown(f"""
-        <div class="ai-card" style="background: {sig_color}22; border-color: {sig_color};">
-            <h2 style="color: {sig_color}; margin: 0;">AI SIGNAL: {signal}</h2>
-            <p style="color: #848e9c; margin: 5px 0;">{reason}</p>
+        <div style="background-color: {color}; padding: 20px; border-radius: 15px; text-align: center;">
+            <h2 style="color: white !important; margin: 0;">توصية الذكاء الاصطناعي: {decision}</h2>
+            <p style="color: white;">قوة مؤشر الـ RSI حالياً: {rsi_val:.2f}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    # Market Stats
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Live Price", f"${price:,.4f}", f"{change:.2f}%")
-    m2.metric("RSI (14)", f"{df_plot['RSI'].iloc[-1]:.2f}")
-    m3.metric("24h Volume", f"{info['quoteVolume']:,.0f}")
+    st.write("---")
 
-    # Professional Candlestick Chart
+    # 5. عرض إحصائيات السوق
+    m1, m2, m3 = st.columns(3)
+    m1.metric("السعر الحالي", f"${current_price:,.4f}", f"{ticker_info['percentage']}%")
+    m2.metric("أعلى سعر (24h)", f"${ticker_info['high']:,.2f}")
+    m3.metric("حجم التداول", f"{ticker_info['quoteVolume']:,.0f}")
+
+    # 6. الشارت التفاعلي (Candlesticks)
     fig = go.Figure(data=[go.Candlestick(
-        x=df_plot['ts'], open=df_plot['open'], high=df_plot['high'],
-        low=df_plot['low'], close=df_plot['close'],
+        x=df['ts'], open=df['open'], high=df['high'],
+        low=df['low'], close=df['close'],
         increasing_line_color='#00ff88', decreasing_line_color='#ff4b4b'
     )])
     
-    # Adding Trend Lines
-    fig.add_trace(go.Scatter(x=df_plot['ts'], y=df_plot['EMA_20'], name='EMA 20', line=dict(color='orange', width=1)))
+    fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_20'], name='خط الاتجاه (EMA 20)', line=dict(color='orange', width=1.5)))
     
-    fig.update_layout(
-        template='plotly_dark', height=450, 
-        margin=dict(l=0, r=0, t=0, b=0), 
-        xaxis_rangeslider_visible=False,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
+    fig.update_layout(template='plotly_dark', height=500, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # 5. News & Project Insights
-    st.markdown("---")
-    st.markdown("### 📰 Market Insights")
-    st.info(f"**{symbol} Analysis:** AI detecting volatility patterns. Monitor EMA support levels.")
-    st.success(f"**Whale Alert:** Large buy orders detected in {symbol.split('/')[0]} ecosystem.")
+else:
+    st.error("فشل في جلب البيانات.. تأكد من اتصال الإنترنت!")
 
-# Run App
-df, data = fetch_market_data(selected_coin, tf)
-if df is not None:
-    render_terminal(selected_coin, df, data)
-
-st.caption("Elite Terminal V3 • Powered by Amin's AI Logic")
+st.caption("تم التطوير بواسطة أمين - محلل الكريبتو الذكي 2026")
