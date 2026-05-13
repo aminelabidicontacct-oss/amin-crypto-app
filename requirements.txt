@@ -3,4 +3,5 @@ pandas
 plotly
 requests
 ta
-ccxt
+scikit-learn
+numpy
