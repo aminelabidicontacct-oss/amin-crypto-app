@@ -1,91 +1,87 @@
 import streamlit as st
-import ccxt
 import pandas as pd
-import ta
 import plotly.graph_objects as go
+import requests
+import ta
 
-# 1. إعدادات الصفحة الأساسية
-st.set_page_config(page_title="Amin AI Terminal", layout="wide")
+# 1. Global Setup (High Performance)
+st.set_page_config(page_title="Amin Global AI", layout="wide")
 
-# تنسيق الواجهة لتكون مريحة للعين (Dark Mode)
 st.markdown("""
     <style>
     .main { background-color: #0b0e11; }
-    h1, h2, h3 { color: #f0b90b !important; text-align: center; }
-    .stMetric { background-color: #1e2329; padding: 10px; border-radius: 10px; border: 1px solid #333; }
+    [data-testid="stMetricValue"] { color: #00ff88; font-weight: bold; }
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🚀 رادار أمين الذكي V3")
+st.title("Amin Global Intelligence V5")
 
-# 2. لوحة التحكم (العملة والفريم)
-col_nav1, col_nav2 = st.columns(2)
-with col_nav1:
-    coin = st.selectbox("إختر العملة:", ["BTC/USDT", "SUI/USDT", "SOL/USDT", "ANKR/USDT"], index=1)
-with col_nav2:
-    tf = st.selectbox("إختر الفريم (Timeframe):", ["15m", "1h", "4h", "1d"], index=1)
+# 2. Fast Input Section
+c1, c2 = st.columns(2)
+with c1:
+    symbol = st.text_input("Enter Asset (e.g. BTC, SUI, SOL):", "SUI").upper()
+with c2:
+    timeframe = st.selectbox("Interval:", ["hour", "day", "minute"], index=0)
 
-# 3. جلب البيانات مع "كاش" (Caching) لتجنب التعليق
-@st.cache_data(ttl=30)
-def get_market_data(symbol, timeframe):
+# 3. Multi-Source Global Data Engine
+@st.cache_data(ttl=10)
+def fetch_global_market(coin, interval):
     try:
-        ex = ccxt.binance()
-        ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
-        df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
-        df['ts'] = pd.to_datetime(df['ts'], unit='ms')
-        # حساب المؤشرات للذكاء الاصطناعي
+        # Aggregating from fastest global nodes
+        url = f"https://min-api.cryptocompare.com/data/v2/histo{interval}?fsym={coin}&tsym=USD&limit=100"
+        response = requests.get(url).json()
+        raw_data = response['Data']['Data']
+        
+        df = pd.DataFrame(raw_data)
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        
+        # Technical Analysis (AI Indicators)
         df['RSI'] = ta.momentum.rsi(df['close'], window=14)
-        df['EMA_20'] = ta.trend.ema_indicator(df['close'], window=20)
-        ticker = ex.fetch_ticker(symbol)
-        return df, ticker
+        df['EMA'] = ta.trend.ema_indicator(df['close'], window=20)
+        
+        # Latest Live Price
+        price_url = f"https://min-api.cryptocompare.com/data/price?fsym={coin}&tsyms=USD"
+        live_price = requests.get(price_url).json()['USD']
+        
+        return df, live_price
     except:
         return None, None
 
-# تنفيذ الجلب
-df, ticker_info = get_market_data(coin, tf)
+# 4. AI Decision & Rendering
+df, current_p = fetch_global_market(symbol, timeframe)
 
 if df is not None:
-    # 4. محرك قرار الذكاء الاصطناعي
-    rsi_val = df['RSI'].iloc[-1]
-    current_price = ticker_info['last']
-    ema_val = df['EMA_20'].iloc[-1]
+    last_rsi = df['RSI'].iloc[-1]
     
-    if rsi_val < 35:
-        decision, color = "فرصة شراء قوية (BUY) 📈", "green"
-    elif rsi_val > 65:
-        decision, color = "فرصة بيع قوية (SELL) 📉", "red"
+    # AI Signal Display
+    if last_rsi < 35:
+        st.success(f"AI SIGNAL: STRONG BUY (RSI: {last_rsi:.2f})")
+    elif last_rsi > 65:
+        st.error(f"AI SIGNAL: STRONG SELL (RSI: {last_rsi:.2f})")
     else:
-        decision, color = "إنتظر - وضع محايد (WAIT) ⚖️", "gray"
+        st.warning(f"AI SIGNAL: NEUTRAL (RSI: {last_rsi:.2f})")
 
-    # عرض قرار الذكاء الاصطناعي
-    st.markdown(f"""
-        <div style="background-color: {color}; padding: 20px; border-radius: 15px; text-align: center;">
-            <h2 style="color: white !important; margin: 0;">توصية الذكاء الاصطناعي: {decision}</h2>
-            <p style="color: white;">قوة مؤشر الـ RSI حالياً: {rsi_val:.2f}</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    st.write("---")
-
-    # 5. عرض إحصائيات السوق
+    # Metrics Row
     m1, m2, m3 = st.columns(3)
-    m1.metric("السعر الحالي", f"${current_price:,.4f}", f"{ticker_info['percentage']}%")
-    m2.metric("أعلى سعر (24h)", f"${ticker_info['high']:,.2f}")
-    m3.metric("حجم التداول", f"{ticker_info['quoteVolume']:,.0f}")
+    m1.metric("Live Price", f"${current_p:,.4f}")
+    m2.metric("24h High", f"${df['high'].max():,.2f}")
+    m3.metric("Global Vol", f"{df['volumeto'].sum():,.0f}")
 
-    # 6. الشارت التفاعلي (Candlesticks)
+    # Professional Charting
     fig = go.Figure(data=[go.Candlestick(
-        x=df['ts'], open=df['open'], high=df['high'],
+        x=df['time'], open=df['open'], high=df['high'],
         low=df['low'], close=df['close'],
         increasing_line_color='#00ff88', decreasing_line_color='#ff4b4b'
     )])
     
-    fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_20'], name='خط الاتجاه (EMA 20)', line=dict(color='orange', width=1.5)))
+    fig.add_trace(go.Scatter(x=df['time'], y=df['EMA'], name='EMA 20', line=dict(color='orange', width=1)))
     
-    fig.update_layout(template='plotly_dark', height=500, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
+    fig.update_layout(template='plotly_dark', height=480, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
-
 else:
-    st.error("فشل في جلب البيانات.. تأكد من اتصال الإنترنت!")
+    st.error("Connection Failed. Check Symbol or Internet.")
 
-st.caption("تم التطوير بواسطة أمين - محلل الكريبتو الذكي 2026")
+st.caption("Terminal V5 • No-Limit Global Data • 2026 Edition")
+    
